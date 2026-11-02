@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DanDan's Vibe Coded Mandelbolt Fractal Generator 4D edition</title>
+    <style>
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #000; font-family: 'Inter', sans-serif; color: white; }
+        #glCanvas { width: 100vw; height: 100vh; display: block; }
+        #ui { 
+            position: absolute; top: 20px; left: 20px; 
+            background: rgba(0, 0, 0, 0.85); padding: 20px; border-radius: 16px; 
+            backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.1); 
+            width: 320px; max-height: 90vh; overflow-y: auto;
+            pointer-events: auto; z-index: 10; box-shadow: 0 12px 40px rgba(0,0,0,0.7);
+        }
+        h1 { margin: 0 0 10px 0; font-size: 1.4rem; font-weight: 300; color: #00ffcc; }
+        .section-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 1px; opacity: 0.5; margin: 15px 0 10px 0; display: block; border-bottom: 1px solid #333; padding-bottom: 5px; }
+        .control-group { margin-bottom: 12px; }
+        label { display: block; font-size: 0.8rem; margin-bottom: 5px; opacity: 0.8; }
+        input[type="range"] { width: 100%; background: #333; cursor: pointer; }
+        input[type="number"] { width: 100%; background: #111; color: #0f0; border: 1px solid #333; padding: 5px; border-radius: 4px; font-family: monospace; }
+        .hint { font-size: 0.7rem; opacity: 0.4; text-align: center; margin-top: 15px; }
+    </style>
+</head>
+<body>
+    <canvas id="glCanvas"></canvas>
+    <div id="ui">
+        <h1>DanDan's Vibe Coded Mandelbolt Fractal Generator 4D edition</h1>
+        <h2> 4D Hyper-Dimensions</h2> 
+        
+        <div class="section">
+            <span class="section-label">Hyper-Dimensions</span>
+            <div class="control-group">
+                <label>Time  (4th Dimension Position)</label>
+                <input type="range" id="wSlice" min="-2.0" max="2.0" step="0.01" value="0.0">
+            </div>
+            <div class="control-group">
+                <label>Evolution Speed Over Time</label>
+                <input type="range" id="wSpeed" min="0.0" max="1.0" step="0.01" value="0.0">
+            </div>
+        </div>
+
+        <div class="section">
+            <span class="section-label">Geometry</span>
+            <div class="control-group">
+                <label>Scale (Folding Constant)</label>
+                <input type="range" id="foldScale" min="1.0" max="4.0" step="0.01" value="2.0">
+            </div>
+            <div class="control-group">
+                <label>Iterations</label>
+                <input type="range" id="iterations" min="1" max="20" step="1" value="8">
+            </div>
+        </div>
+
+        <div class="section">
+            <span class="section-label">Visuals</span>
+            <div class="control-group">
+                <label>Color Shift</label>
+                <input type="range" id="colorShift" min="0" max="6.28" step="0.1" value="0">
+            </div>
+            <div class="control-group">
+                <label>Brightness</label>
+                <input type="range" id="brightness" min="0.1" max="2.0" step="0.1" value="1.0">
+            </div>
+        </div>
+        <p class="hint">Drag to rotate • Scroll to zoom</p>
+        <p class="hint">Uses Ray marching to render the 4D fractal</p>
+    
+    </div>
+
+    <script>
+        const canvas = document.getElementById('glCanvas');
+        const gl = canvas.getContext('webgl2');
+        if (!gl) { alert('WebGL 2 not supported'); }
+
+        const vsSource = `#version 300 es
+        in vec2 a_position;
+        void main() { gl_Position = vec4(a_position, 0.0, 1.0); }`;
+
+        const fsSource = `#version 300 es
+        precision highp float;
+        uniform vec2 u_resolution;
+        uniform float u_time;
+        uniform vec3 u_cameraPos;
+        uniform vec3 u_cameraTarget;
+        uniform int u_iterations;
+        uniform float u_colorShift;
+        uniform float u_wSlice;
+        uniform float u_foldScale;
+        uniform float u_brightness;
+        out vec4 fragColor;
+
+        #define MAX_STEPS 100
+        #define MIN_DIST 0.001
+        #define MAX_DIST 20.0
+
+        // 4D Vector helper
+        vec4 boxFold(vec4 v) {
+            return clamp(v, -1.0, 1.0) * u_foldScale - v;
+        }
+
+        float map(vec3 p) {
+            // We treat the 3D point p as a slice of a 4D object at coordinate W
+            vec4 z = vec4(p, u_wSlice);
+            float dr = 1.0;
+
+            for(int i=0; i<20; i++) {
+                if(i >= u_iterations) break;
+                
+                z = boxFold(z);
+                
+                float r2 = dot(z, z);
+                if(r2 < 0.5) {
+                    float s = 2.0 / r2; z *= s; dr *= s;
+                } else if(r2 < 1.0) {
+                    float s = 1.0 / r2; z *= s; dr *= s;
+                }
+                
+                // 4D Translation (Mandelbox constant)
+                z = z * u_foldScale + vec4(p, u_wSlice);
+                dr = dr * u_foldScale + 1.0;
+            }
+            return length(z.xyz) / abs(dr);
+        }
+
+        vec3 calcNormal(vec3 p) {
+            float eps = 0.001;
+            return normalize(vec3(
+                map(vec3(p.x + eps, p.y, p.z)) - map(vec3(p.x - eps, p.y, p.z)),
+                map(vec3(p.x, p.y + eps, p.z)) - map(vec3(p.x, p.y - eps, p.z)),
+                map(vec3(p.x, p.y, p.z + eps)) - map(vec3(p.x, p.y, p.z - eps))
+            ));
+        }
+
+        void main() {
+            vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
+            vec3 ro = u_cameraPos;
+            vec3 ww = normalize(u_cameraTarget - ro);
+            vec3 uu = normalize(cross(ww, vec3(0.0, 1.0, 0.0)));
+            vec3 vv = normalize(cross(uu, ww));
+            vec3 rd = normalize(uv.x * uu + uv.y * vv + 1.5 * ww);
+            
+            float t = 0.0;
+            for(int i=0; i<MAX_STEPS; i++) {
+                float d = map(ro + rd * t);
+                if(d < MIN_DIST || t > MAX_DIST) break;
+                t += d;
+            }
+
+            if(t < MAX_DIST) {
+                vec3 p = ro + rd * t;
+                vec3 n = calcNormal(p);
+                vec3 lightDir = normalize(vec3(5.0, 5.0, 5.0) - p);
+                float diff = max(dot(n, lightDir), 0.0);
+                vec3 col = 0.5 + 0.5 * cos(u_colorShift + p + vec3(0.0, 2.0, 4.0));
+                fragColor = vec4(col * (diff + 0.2) * u_brightness, 1.0);
+            } else {
+                fragColor = vec4(0.01, 0.01, 0.03, 1.0);
+            }
+        }`;
+
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error(gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        const program = gl.createProgram();
+        gl.attachShader(program, createShader(gl, gl.VERTEX_SHADER, vsSource));
+        gl.attachShader(program, createShader(gl, gl.FRAGMENT_SHADER, fsSource));
+        gl.linkProgram(program);
+        gl.useProgram(program);
+
+        const posLoc = gl.getAttribLocation(program, "a_position");
+        const buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(posLoc);
+        gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+        const uRes = gl.getUniformLocation(program, "u_resolution");
+        const uTime = gl.getUniformLocation(program, "u_time");
+        const uPos = gl.getUniformLocation(program, "u_cameraPos");
+        const uTar = gl.getUniformLocation(program, "u_cameraTarget");
+        const uIte = gl.getUniformLocation(program, "u_iterations");
+        const uCol = gl.getUniformLocation(program, "u_colorShift");
+        const uWSl = gl.getUniformLocation(program, "u_wSlice");
+        const uFSc = gl.getUniformLocation(program, "u_foldScale");
+        const uBrt = gl.getUniformLocation(program, "u_brightness");
+
+        let angleX = 0, angleY = 0, zoom = 5;
+        let isDragging = false, lastX = 0, lastY = 0;
+        canvas.addEventListener('mousedown', e => { isDragging = true; lastX = e.clientX; lastY = e.clientY; });
+        window.addEventListener('mouseup', () => isDragging = false);
+        window.addEventListener('mousemove', e => {
+            if (!isDragging) return;
+            angleX += (e.clientX - lastX) * 0.01;
+            angleY += (e.clientY - lastY) * 0.01;
+            lastX = e.clientX; lastY = e.clientY;
+        });
+        canvas.addEventListener('wheel', e => { zoom = Math.max(1, Math.min(20, zoom + e.deltaY * 0.01)); e.preventDefault(); }, {passive:false});
+
+        function render(time) {
+            canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            gl.uniform2f(uRes, canvas.width, canvas.height);
+            gl.uniform1f(uTime, time * 0.001);
+            gl.uniform3f(uPos, zoom * Math.cos(angleY) * Math.sin(angleX), zoom * Math.sin(angleY), zoom * Math.cos(angleY) * Math.cos(angleX));
+            gl.uniform3f(uTar, 0.0, 0.0, 0.0);
+            gl.uniform1i(uIte, parseInt(document.getElementById('iterations').value));
+            gl.uniform1f(uCol, parseFloat(document.getElementById('colorShift').value));
+            gl.uniform1f(uWSl, parseFloat(document.getElementById('wSlice').value) + Math.sin(time * 0.001 * parseFloat(document.getElementById('wSpeed').value)));
+            gl.uniform1f(uFSc, parseFloat(document.getElementById('foldScale').value));
+            gl.uniform1f(uBrt, parseFloat(document.getElementById('brightness').value));
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+            requestAnimationFrame(render);
+        }
+        requestAnimationFrame(render);
+    </script>
+</body>
+</html>
